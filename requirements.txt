@@ -1,2 +1,2 @@
-aiogram
-openai
+aiogram>=3.7,<4
+openai>=1.40
