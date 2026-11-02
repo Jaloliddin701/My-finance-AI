@@ -18,8 +18,22 @@ log = logging.getLogger("finance-bot")
 
 # --- НАСТРОЙКИ (берутся из переменных окружения) ---
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+
+# По умолчанию используется Google Gemini (есть бесплатный лимит).
+# Если задан только OPENAI_API_KEY — используется OpenAI.
+if GEMINI_API_KEY:
+    AI_PROVIDER = "Gemini"
+    AI_API_KEY = GEMINI_API_KEY
+    AI_BASE_URL = GEMINI_BASE_URL
+    AI_MODEL = os.getenv("AI_MODEL", "gemini-2.5-flash")
+else:
+    AI_PROVIDER = "OpenAI"
+    AI_API_KEY = OPENAI_API_KEY
+    AI_BASE_URL = None
+    AI_MODEL = os.getenv("AI_MODEL") or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 DB_PATH = os.getenv("DB_PATH", "finance.db")
 
 CATEGORIES = [
@@ -209,7 +223,7 @@ def system_prompt():
 
 async def parse_with_ai(text):
     response = await ai_client.chat.completions.create(
-        model=OPENAI_MODEL,
+        model=AI_MODEL,
         messages=[
             {"role": "system", "content": system_prompt()},
             {"role": "user", "content": text},
@@ -329,7 +343,7 @@ async def handle_bank_messages(message: types.Message):
     try:
         items = await parse_with_ai(text[:8000])
     except Exception:
-        log.exception("Ошибка при обращении к OpenAI")
+        log.exception("Ошибка при обращении к %s", AI_PROVIDER)
         await message.answer("⚠️ Произошла ошибка при обработке чека. Попробуйте ещё раз позже.")
         return
 
@@ -356,12 +370,17 @@ async def unsupported(message: types.Message):
 
 async def main():
     global ai_client
-    missing = [name for name, value in (("TELEGRAM_BOT_TOKEN", TELEGRAM_BOT_TOKEN), ("OPENAI_API_KEY", OPENAI_API_KEY)) if not value]
+    missing = []
+    if not TELEGRAM_BOT_TOKEN:
+        missing.append("TELEGRAM_BOT_TOKEN")
+    if not AI_API_KEY:
+        missing.append("GEMINI_API_KEY (или OPENAI_API_KEY)")
     if missing:
         sys.exit(f"Не заданы переменные окружения: {', '.join(missing)}. См. README.md")
 
     init_db()
-    ai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+    ai_client = AsyncOpenAI(api_key=AI_API_KEY, base_url=AI_BASE_URL)
+    log.info("AI: %s, модель %s", AI_PROVIDER, AI_MODEL)
     bot = Bot(token=TELEGRAM_BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     await bot.set_my_commands([
         types.BotCommand(command="stats", description="Баланс за всё время"),
